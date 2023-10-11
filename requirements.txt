@@ -1,0 +1,8 @@
+pandas
+pyproj
+iiif_prezi3
+fiona
+geopandas
+opencv-python
+pikepdf
+
