@@ -5,4 +5,4 @@ fiona
 geopandas
 opencv-python
 pikepdf
-
+tqdm
