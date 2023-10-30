@@ -18,11 +18,12 @@ def _get_parser():
     prog="python create_directory_annotations.py",
     description="Create IIIF annotations for a directory"
   )
-  parser.add_argument("directory",type=str,help="Directory name")
+  parser.add_argument("label",type=str,help="Directory name to use as label")
+  parser.add_argument("directory",type=str,help="Directory file name")
   parser.add_argument("ark",type=str,help="Ark of the directory")
   parser.add_argument("input_json",type=pathlib.Path,help="Path to the input json annotations")
   parser.add_argument("diff",type=int,help="Difference between pdf view and ark view")
-  parser.add_argument("output",type=pathlib.Path,help="Path to the output IIIF annotations")
+  parser.add_argument("output",type=str,help="Path to the output IIIF annotations")
   return parser
 
 def create_target(canvasid:str, box_types):
@@ -82,8 +83,9 @@ def getBoxFromSpan(input_text:str,entries):
       return boxes, entry_index
   return None
 local = False
-def create_directory_annotations(directory_name:str,ark:str,diff_vuepdf_vueark:int,directory_path:pathlib.Path,output:pathlib.Path):
-  os.makedirs(f"iiif/{ark}", exist_ok=True)
+def create_directory_annotations(label:str,directory_file_name:str,ark:str,diff_vuepdf_vueark:int,npage_pdf_d:int,npage_pdf_f:int,directory_path:pathlib.Path,output:str):
+  #print(output)
+  os.makedirs(output, exist_ok=True)
   # prefix is useful for local testing
   if local:
     prefix = "http://localhost:8000"
@@ -91,8 +93,8 @@ def create_directory_annotations(directory_name:str,ark:str,diff_vuepdf_vueark:i
     prefix = "https://directory.geohistoricaldata.org"
   config.configs['helpers.auto_fields.AutoLang'].auto_lang = "fr"
   manifest = Manifest(
-    id=f"{prefix}/iiif/{ark}/manifest.json",
-    label=f"{directory_name}",
+    id=f"{prefix}/{output}/manifest.json",
+    label=label,
     behavior=["individuals"],
     provider=[
       {
@@ -119,32 +121,34 @@ def create_directory_annotations(directory_name:str,ark:str,diff_vuepdf_vueark:i
     for sequence in original_manifest_json["sequences"]:
       for canvas in sequence["canvases"]:
         shapes[canvas["@id"]] = (canvas["height"],canvas["width"])
-    for file_path in tqdm(sorted(os.listdir(directory_path)),desc=f'Create IIIF for {directory_name} {ark}'):
+    #for file_path in tqdm(sorted(os.listdir(directory_path)),desc=f'Create IIIF for {directory_file_name} {ark}'):
+    for pdf_view in tqdm(range(int(npage_pdf_d),int(npage_pdf_f)+1),desc=f'IIIF for {directory_file_name} {ark} {npage_pdf_d}-{npage_pdf_f}'):
+      ark_view = pdf_view+diff_vuepdf_vueark
+      try:
+        height, width = shapes[f"https://gallica.bnf.fr/iiif/{ark}/canvas/f{ark_view}"]
+        canvas = manifest.make_canvas(
+          id=f"https://gallica.bnf.fr/iiif/{ark}/p{ark_view}",
+          label=f"Page {ark_view}",
+          height=height, width=width) # type: ignore
+      except:
+        logging.error(f"Error for canvas https://gallica.bnf.fr/iiif/{ark}/canvas/f{ark_view} with {height}x{width}")
+        os.removedirs(output)
+        return
+      canvas.add_thumbnail(f"https://gallica.bnf.fr/{ark}/f{ark_view}.thumbnail")
+      canvas.add_image(
+        image_url=f"https://gallica.bnf.fr/iiif/{ark}/f{ark_view}/full/full/0/default.jpg",
+        anno_page_id=f"https://gallica.bnf.fr/iiif/{ark}/p{ark_view}-page",
+        anno_id=f"https://gallica.bnf.fr/iiif/{ark}/p{ark_view}-image",
+        format="image/png",
+        height=height,
+        width=width,
+        service=ServiceItem1(id=f"https://gallica.bnf.fr/iiif/{ark}/f{ark_view}",type="ImageService1",profile="level2"))
+      file_path = f"{pdf_view:04d}.json"
       # check if current file_path is a json file
       if os.path.isfile(os.path.join(directory_path, file_path)) and file_path.endswith(".json"):
-        pdf_view = int(file_path.split(".json")[0])
-        ark_view = pdf_view+diff_vuepdf_vueark
-        height, width = shapes[f"https://gallica.bnf.fr/iiif/{ark}/canvas/f{ark_view}"]
-        try:
-          canvas = manifest.make_canvas(
-            id=f"https://gallica.bnf.fr/iiif/{ark}/p{ark_view}",
-            label=f"Page {ark_view}",
-            height=height, width=width) # type: ignore
-        except:
-          logging.error(f"Error for canvas https://gallica.bnf.fr/iiif/{ark}/canvas/f{ark_view} with {height}x{width}")
-          os.removedirs(f"iiif/{ark}")
-          return
-        canvas.add_thumbnail(f"https://gallica.bnf.fr/{ark}/f{ark_view}.thumbnail")
-        canvas.add_image(
-          image_url=f"https://gallica.bnf.fr/iiif/{ark}/f{ark_view}/full/full/0/default.jpg",
-          anno_page_id=f"https://gallica.bnf.fr/iiif/{ark}/p{ark_view}-page",
-          anno_id=f"https://gallica.bnf.fr/iiif/{ark}/p{ark_view}-image",
-          format="image/png",
-          height=height,
-          width=width,
-          service=ServiceItem1(id=f"https://gallica.bnf.fr/iiif/{ark}/f{ark_view}",type="ImageService1",profile="level2"))
-        anno_page_embedded = AnnotationPage(id=f"{prefix}/iiif/{ark}/p{ark_view}.json")
-        anno_page_referenced = AnnotationPage(id=f"{prefix}/iiif/{ark}/p{ark_view}.json")
+        #pdf_view = int(file_path.split(".json")[0])
+        anno_page_embedded = AnnotationPage(id=f"{prefix}/{output}/p{ark_view}.json")
+        anno_page_referenced = AnnotationPage(id=f"{prefix}/{output}/p{ark_view}.json")
         canvas.annotations = [anno_page_embedded]
         transcript = []
         with open(os.path.join(directory_path, file_path)) as file:
@@ -199,18 +203,18 @@ def create_directory_annotations(directory_name:str,ark:str,diff_vuepdf_vueark:i
                     box_types.append((box,ent_label))
                   last_child += res_index
               anno = Annotation(
-                id=f"{prefix}/iiif/{ark}/p{ark_view}-tag-{id}",
+                id=f"{prefix}/{output}/p{ark_view}-tag-{id}",
                 motivation="tagging",
                 body={"type": "TextualBody","language": "fr","format": "text/plain","value": text},
                 target=create_target(canvas.id,box_types),
-                anno_page_id=f"{prefix}/iiif/{ark}/p{ark_view}")
+                anno_page_id=f"{prefix}/{output}/p{ark_view}")
               anno_page_referenced.add_item(anno)
               def stringify(txt:str):
                 if len(txt) > 0:
                   return "\""+txt+"\""
                 else:
                   return txt
-              transcript.append((directory_name,str(ark_view),
+              transcript.append((directory_file_name,str(ark_view),
                                 stringify(", ".join(complete_ent_text)),
                                   stringify(" & ".join(map["TITRE"])),
                                   stringify(" & ".join(map["PER"])),
@@ -221,9 +225,9 @@ def create_directory_annotations(directory_name:str,ark:str,diff_vuepdf_vueark:i
             else:
               #print(f"no ents for entry {id}")
               if text:
-                transcript.append((directory_name,str(ark_view),text,"","","","","",""))
+                transcript.append((directory_file_name,str(ark_view),text,"","","","","",""))
         json_canvas = json.loads(anno_page_referenced.json())
-        with open(os.path.join(f"iiif/{ark}", f"p{ark_view}.json"), 'w') as output_file:
+        with open(os.path.join(output, f"p{ark_view}.json"), 'w') as output_file:
           json.dump(json_canvas, output_file, indent = 1)
         # Adding the rendering if there is any on the page
         if len(transcript) > 0:
@@ -237,30 +241,32 @@ def create_directory_annotations(directory_name:str,ark:str,diff_vuepdf_vueark:i
             # add the rendering to the canvas
             rendering = ExternalItem(id=f"{prefix}/txt/{ark}/p{ark_view}.csv", type="Text", label="Transcript", format="text/csv")
           else:
-            rendering = ExternalItem(id=f"https://api.geohistoricaldata.org/directories/export.csv?source=eq.{directory_name}&page=eq.{pdf_view:04d}", type="Text", label="Transcript", format="text/csv")
+            rendering = ExternalItem(id=f"https://api.geohistoricaldata.org/directories/entries.csv?source=eq.{directory_file_name}&page=eq.{pdf_view:04d}&order=id.asc", type="Text", label="Transcript", format="text/csv")
           canvas.rendering = [rendering]
 
     json_manifest = json.loads(manifest.json())
     # need to clean up the referenced version (iiif_prezi3 creates empty "items")
     for item in json_manifest["items"]:
-      for annotation in item["annotations"]:
-        del annotation["items"] 
+      if "annotations" in item:
+        for annotation in item["annotations"]:
+          del annotation["items"] 
     # adding logo (only one at a time for mirador)
     # FIXME choose logo depending on the provider
-    json_manifest["logo"] = "https://www.bnf.fr/sites/default/files/logo.svg"#"https://soduco.geohistoricaldata.org/public/images/soduco_logo.png"
-    with open(os.path.join(f"{output}/iiif/{ark}", "manifest.json"), 'w') as output_file:
+    #json_manifest["logo"] = "https://www.bnf.fr/sites/default/files/logo.svg"#"https://soduco.geohistoricaldata.org/public/images/soduco_logo.png"
+    with open(os.path.join(output, "manifest.json"), 'w') as output_file:
       json.dump(json_manifest, output_file, indent = 1)
   else:
-    logging.error(f"Directory {directory_name} with {ark} not processed (GET failed for https://gallica.bnf.fr/iiif/{ark}/manifest.json)")
+    logging.error(f"Directory {directory_file_name} with {ark} not processed (GET failed for https://gallica.bnf.fr/iiif/{ark}/manifest.json)")
 
 if __name__ == '__main__':
   parser = _get_parser()
   # Parse arguments
   args = parser.parse_args()
   vargs = vars(args)
-  directory_name = vargs.pop("directory")
+  label = vargs.pop("label")
+  directory_file_name = vargs.pop("directory")
   ark = vargs.pop("ark")
   diff_vuepdf_vueark = vargs.pop("diff")
   directory_path = vargs.pop("input_json")
   output = vargs.pop("output")
-  create_directory_annotations(directory_name,ark,diff_vuepdf_vueark,directory_path,output)
+  create_directory_annotations(label,directory_file_name,ark,diff_vuepdf_vueark,directory_path,output)
